@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ESP32 Safety Dashboard</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@600;700&family=Orbitron:wght@700&display=swap');
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #070c10;
+    color: #e0eeff;
+    font-family: 'Rajdhani', sans-serif;
+    min-height: 100vh;
+    background-image:
+      linear-gradient(rgba(0,200,255,.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,200,255,.03) 1px, transparent 1px);
+    background-size: 36px 36px;
+  }
+
+  #topbar {
+    background: rgba(5,10,15,.97);
+    border-bottom: 1px solid #1a3a50;
+    padding: 0 24px;
+    height: 50px;
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  .logo {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 12px;
+    color: #00d4ff;
+    letter-spacing: 3px;
+    border: 1px solid #00d4ff;
+    padding: 3px 10px;
+  }
+  #conn-pill {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+    padding: 3px 10px;
+    border: 1px solid #333;
+    border-radius: 2px;
+    transition: all .3s;
+  }
+  #conn-pill.ok  { color:#00ff88; border-color:#00ff88; background:rgba(0,255,136,.07); }
+  #conn-pill.err { color:#ff3344; border-color:#ff3344; background:rgba(255,51,68,.07); }
+  .dot { width:7px; height:7px; border-radius:50%; background:currentColor; }
+  .blink { animation: blink 1s infinite; }
+  @keyframes blink { 50%{opacity:.2} }
+
+  #last-update {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+    color: #3a5a70;
+    margin-left: auto;
+  }
+  #last-update span { color: #7a9ab5; }
+
+  #alert-banner {
+    display: none;
+    background: rgba(255,51,68,.12);
+    border-bottom: 2px solid #ff3344;
+    padding: 8px 24px;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 13px;
+    color: #ff3344;
+    animation: flashbg .5s infinite;
+  }
+  @keyframes flashbg { 50%{background:rgba(255,51,68,.25)} }
+
+  #main {
+    padding: 18px 20px;
+    max-width: 1300px;
+    margin: 0 auto;
+  }
+
+  .section-label {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 10px;
+    letter-spacing: 3px;
+    color: #00d4ff;
+    text-transform: uppercase;
+    margin-bottom: 12px;
+    margin-top: 20px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid #1a3a50;
+  }
+
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(175px, 1fr));
+    gap: 10px;
+  }
+
+  .card {
+    background: #0d1820;
+    border: 1px solid #1a3050;
+    padding: 14px 16px;
+    position: relative;
+    overflow: hidden;
+    transition: border-color .3s, box-shadow .3s;
+  }
+  .card::before {
+    content:'';
+    position:absolute; top:0; left:0; right:0; height:2px;
+    background: var(--ac, #00d4ff);
+  }
+  .card.safe  { --ac:#00ff88; border-color:rgba(0,255,136,.2); }
+  .card.warn  { --ac:#ffaa00; border-color:rgba(255,170,0,.3); box-shadow:0 0 10px rgba(255,170,0,.1); }
+  .card.danger{ --ac:#ff3344; border-color:rgba(255,51,68,.4); box-shadow:0 0 14px rgba(255,51,68,.2); animation:dangerPulse 1s infinite; }
+  @keyframes dangerPulse { 50%{box-shadow:0 0 22px rgba(255,51,68,.4)} }
+
+  .card-label {
+    font-size: 10px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: #5a8aaa;
+    margin-bottom: 6px;
+  }
+  .card-value {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 30px;
+    line-height: 1;
+    color: #e8f4ff;
+  }
+  .card-unit { font-size: 12px; color: #5a8aaa; margin-left: 3px; }
+  .card-status {
+    font-size: 10px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    font-weight: 700;
+    margin-top: 7px;
+    color: var(--ac, #00d4ff);
+  }
+  .bar { height:3px; background:#1a3050; margin-top:9px; border-radius:2px; overflow:hidden; }
+  .bar-fill { height:100%; border-radius:2px; background:var(--ac,#00d4ff); transition:width .5s; }
+
+  .fall-circle {
+    width:54px; height:54px; border-radius:50%;
+    display:flex; align-items:center; justify-content:center;
+    font-size:22px; margin:6px auto;
+    border:2px solid var(--ac,#00ff88);
+    background:rgba(0,255,136,.08);
+    color:var(--ac,#00ff88);
+    transition:all .3s;
+  }
+  .card.danger .fall-circle { animation:dangerPulse 0.5s infinite; }
+
+  .axes { display:flex; gap:8px; margin-top:6px; }
+  .ax { flex:1; text-align:center; }
+  .ax-lbl { font-size:10px; color:#3a5a70; letter-spacing:1px; }
+  .ax-val { font-family:'Share Tech Mono',monospace; font-size:15px; color:#e8f4ff; }
+
+
+  #map { width:100%; height:400px; border:1px solid #1a3050; }
+  #leaflet-map { width:100%; height:100%; filter:brightness(.8) saturate(.6) hue-rotate(160deg); }
+
+  #raw {
+    background:#050a0f;
+    border:1px solid #1a3050;
+    padding:12px;
+    font-family:'Share Tech Mono',monospace;
+    font-size:11px;
+    color:#00ff88;
+    max-height:180px;
+    overflow-y:auto;
+    white-space:pre;
+    margin-top:10px;
+  }
+
+  ::-webkit-scrollbar{width:4px} ::-webkit-scrollbar-track{background:#070c10} ::-webkit-scrollbar-thumb{background:#1a3050}
+
+  @media(max-width:600px){
+    .cards{grid-template-columns:repeat(2,1fr)}
+    #topbar{padding:0 12px}
+  }
+</style>
+</head>
+<body>
+  <button onclick="enableAudio()" 
+style="position:fixed;top:60px;right:20px;z-index:999;
+background:#00d4ff;color:#000;padding:6px 12px;
+border:none;border-radius:4px;cursor:pointer;">
+Enable Sound
+</button>
+
+<div id="topbar">
+  <div class="logo">ICS · ESP32</div>
+  <div id="conn-pill" class="err">
+    <div class="dot" id="conn-dot"></div>
+    <span id="conn-txt">CONNECTING</span>
+  </div>
+  <div id="last-update">LAST UPDATE: <span id="last-time">—</span></div>
+</div>
+
+<div id="alert-banner" id="ab">⚠ &nbsp;<span id="ab-msg"></span></div>
+
+<div id="main">
+
+  <div class="section-label">⬡ Live Sensor Data</div>
+
+  <div class="cards">
+    <!-- Heart Rate -->
+    <div class="card safe" id="c-hr">
+      <div class="card-label">♥ Heart Rate</div>
+      <div><span class="card-value" id="v-hr">—</span><span class="card-unit">BPM</span></div>
+      <div class="card-status" id="s-hr">WAITING</div>
+      <div class="bar"><div class="bar-fill" id="b-hr" style="width:0%"></div></div>
+    </div>
+
+    <!-- Temperature -->
+    <div class="card safe" id="c-temp">
+      <div class="card-label">⊙ Temperature</div>
+      <div><span class="card-value" id="v-temp">—</span><span class="card-unit">°C</span></div>
+      <div class="card-status" id="s-temp">WAITING</div>
+      <div class="bar"><div class="bar-fill" id="b-temp" style="width:0%"></div></div>
+    </div>
+
+    <!-- Humidity -->
+    <div class="card safe" id="c-hum">
+      <div class="card-label">◌ Humidity</div>
+      <div><span class="card-value" id="v-hum">—</span><span class="card-unit">%</span></div>
+      <div class="card-status" id="s-hum">WAITING</div>
+      <div class="bar"><div class="bar-fill" id="b-hum" style="width:0%"></div></div>
+    </div>
+
+    <!-- CO / Gas -->
+    <div class="card safe" id="c-co">
+      <div class="card-label">☁ Gas (MQ)</div>
+      <div><span class="card-value" id="v-co">—</span><span class="card-unit">raw</span></div>
+      <div class="card-status" id="s-co">WAITING</div>
+      <div class="bar"><div class="bar-fill" id="b-co" style="width:0%"></div></div>
+    </div>
+
+    <!-- Fall Detection -->
+    <div class="card safe" id="c-fall" style="text-align:center">
+      <div class="card-label">↯ Fall Detection</div>
+      <div class="fall-circle" id="fall-icon">↑</div>
+      <div class="card-status" id="s-fall">UPRIGHT</div>
+    </div>
+
+    <!-- Accelerometer -->
+    <div class="card safe" id="c-accel">
+      <div class="card-label">⟳ Accelerometer</div>
+      <div class="axes">
+        <div class="ax"><div class="ax-lbl">X</div><div class="ax-val" id="v-ax">—</div></div>
+        <div class="ax"><div class="ax-lbl">Y</div><div class="ax-val" id="v-ay">—</div></div>
+        <div class="ax"><div class="ax-lbl">Z</div><div class="ax-val" id="v-az">—</div></div>
+      </div>
+      <div class="card-status" id="s-accel">STABLE</div>
+    </div>
+    <!-- 🌫 VOC -->
+<div class="card safe" id="c-voc">
+  <div class="card-label">🌫 VOC (Air Quality)</div>
+  <div>
+    <span class="card-value" id="v-voc">—</span>
+    <span class="card-unit">kΩ</span>
+  </div>
+  <div class="card-status" id="s-voc">WAITING</div>
+  <div class="bar">
+    <div class="bar-fill" id="b-voc" style="width:0%"></div>
+  </div>
+</div>
+
+<!-- 🌍 AQI -->
+<div class="card safe" id="c-aqi">
+  <div class="card-label">🌍 Air Quality Index</div>
+  <div>
+    <span class="card-value" id="v-aqi">—</span>
+  </div>
+  <div class="card-status" id="s-aqi">WAITING</div>
+  <div class="bar">
+    <div class="bar-fill" id="b-aqi" style="width:0%"></div>
+  </div>
+</div>
+  </div>
+
+  <!-- MAP -->
+  <div class="section-label">◎ GPS Location</div>
+  <div id="map"><div id="leaflet-map"></div></div>
+  <div style="display:flex;gap:12px;margin-top:8px;font-family:'Share Tech Mono',monospace;font-size:11px;color:#3a5a70;">
+    <span>LAT: <span id="v-lat" style="color:#7a9ab5">—</span></span>
+    <span>LNG: <span id="v-lng" style="color:#7a9ab5">—</span></span>
+  </div>
+
+  <!-- RAW -->
+  <div class="section-label">⬡ Raw Firebase Payload</div>
+  <div id="raw">Fetching from Firebase...</div>
+  <!-- 👷 WORKER INFO -->
+  <div class="section-label">👷 Worker Identity 1</div>
+  <div class="card">
+    <div>Name: <span id="worker-name">Ravi Kumar</span></div>
+    <div>ID: <span id="worker-id">W-102</span></div>
+    <div>Status: <span id="worker-status">SAFE</span></div>
+  </div>
+  <div class="section-label">👷 Worker Identity 2</div>
+  <div class="card">
+    <div>Name: <span id="worker-name">Rohith S</span></div>
+    <div>ID: <span id="worker-id">W-103</span></div>
+    <div>Status: <span id="worker-status">NULL</span></div>
+  </div>
+  <div class="section-label">👷 Worker Identity 3</div>
+  <div class="card">
+    <div>Name: <span id="worker-name">Varun C</span></div>
+    <div>ID: <span id="worker-id">W-104</span></div>
+    <div>Status: <span id="worker-status">NULL</span></div>
+  </div>
+  
+</div>
+
+<!--  ALERT LOG -->
+   <div class="section-label">🚨 Alert Logs</div>
+   <div class="card">
+   <div id="alert-log" style="max-height:150px;overflow:auto;font-family:monospace;font-size:12px;"></div>
+</div>
+
+</div><!-- /main -->
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/emailjs-com@3/dist/email.min.js"></script>
+
+<script>
+  (function(){
+    emailjs.init("v8GmKvR1ouofMTjzU");
+  })();
+
+  function sendEmailAlert(d) {
+
+    let reason = "Normal";
+    let precautions = "Monitor worker";
+
+    if (d.FALL == 1) {
+      reason = "Worker fall detected";
+      precautions = "Send rescue team immediately";
+    } 
+    else if (d.CO > 2500) {
+      reason = "High gas exposure";
+      precautions = "Evacuate area and provide oxygen support";
+    }
+
+    emailjs.send("service_4yi87u5", "template_yeuh1ys", {
+      name: "Ravi Kumar",
+      id: "W-102",
+      hr: d.HR,
+      co: d.CO,
+      lat: d.LAT,
+      lng: d.LNG,
+      reason: reason,
+      precautions: precautions
+    })
+    .then(() => console.log("EMAIL SENT ✅"))
+    .catch(err => console.log("EMAIL ERROR ❌", err));
+  }
+</script>
+<!-- Firebase SDK (REQUIRED) -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+
+<script>
+
+// 🔥 FIREBASE CONFIG
+
+const firebaseConfig = {
+  apiKey: "AIzaSyCN_WKACOnpMjPE6uTVWztv86wcbYL5BC8",
+  authDomain: "wearable-safety-system-45cf6.firebaseapp.com",
+  databaseURL: "https://wearable-safety-system-45cf6-default-rtdb.firebaseio.com",
+  projectId: "wearable-safety-system-45cf6",
+  storageBucket: "wearable-safety-system-45cf6.firebasestorage.app",
+  messagingSenderId: "575948218639",
+  appId: "1:575948218639:web:819c3a60e4d4ae90725e7a",
+  measurementId: "G-BGWRMBTHW4"
+};
+
+//  Initialize Firebase
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+
+// ── Map ──────────────────────────────────────────
+const map = L.map('leaflet-map').setView([11.0, 78.0], 13);
+
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 19
+}).addTo(map);
+
+let marker = null;
+//  ALERT LOG SYSTEM
+
+function addAlert(msg) {
+  const log = document.getElementById("alert-log");
+
+  const entry = document.createElement("div");
+  entry.innerText = new Date().toLocaleTimeString() + " → " + msg;
+
+  log.prepend(entry);
+}
+
+function setMarker(lat, lng, fall, co) {
+  const color = fall ? '#ff3344' : co > 1500 ? '#ffaa00' : '#00ff88';
+
+  const icon = L.divIcon({
+    className: '',
+    html: `<div style="width:14px;height:14px;border-radius:50%;background:${color};border:2px solid #fff;box-shadow:0 0 8px ${color}"></div>`,
+    iconSize:[14,14],
+    iconAnchor:[7,7]
+  });
+
+  if (marker) {
+    marker.setLatLng([lat,lng]);
+    marker.setIcon(icon);
+  } else {
+    marker = L.marker([lat,lng],{icon}).addTo(map);
+    map.setView([lat,lng],15);
+  }
+}
+
+// ── Helpers ──────────────────────────────────────
+function lvl(v, w, d) { return v >= d ? 'danger' : v >= w ? 'warn' : 'safe'; }
+
+const STATUS = {
+  safe:'NOMINAL',
+  warn:'WARNING',
+  danger:'DANGER'
+};
+
+function setCard(cardId, valId, statId, barId, value, displayVal, min, max, warn, danger) {
+  const l = lvl(value, warn, danger);
+
+  document.getElementById(cardId).className = 'card ' + l;
+  document.getElementById(valId).textContent = displayVal;
+  document.getElementById(statId).textContent = STATUS[l];
+
+  if (barId) {
+    const pct = Math.min(100, Math.max(0, ((value - min) / (max - min)) * 100));
+    document.getElementById(barId).style.width = pct.toFixed(1) + '%';
+  }
+}
+
+// ── Alert ────────────────────────────────────────
+let bannerTimer = null;
+
+function showAlert(msg) {
+  const el = document.getElementById('alert-banner');
+  document.getElementById('ab-msg').textContent = msg;
+  el.style.display = 'block';
+
+  if (bannerTimer) clearTimeout(bannerTimer);
+  bannerTimer = setTimeout(() => el.style.display = 'none', 7000);
+}
+
+let audioEnabled = false;
+
+const alertSound = new Audio("https://www.soundjay.com/buttons/sounds/beep-01a.mp3");
+
+function enableAudio() {
+  audioEnabled = true;
+  alert("Audio Enabled ");
+}
+
+function playSound() {
+  if (!audioEnabled) return;
+  alertSound.play();
+}
+
+function speakAlert(msg) {
+  if (!audioEnabled) return;
+
+  const speech = new SpeechSynthesisUtterance(msg);
+  speech.lang = "en-US";
+  speech.rate = 1;
+  speech.pitch = 1;
+
+  window.speechSynthesis.speak(speech);
+}
+
+// ── Render ───────────────────────────────────────
+function render(d) {
+  if (d.LAT == 0 || d.LNG == 0) {
+  d.LAT = 11.077665;   // your location
+  d.LNG = 77.142058;
+}
+    //  SEND ALERT TO NODE SERVER
+if (d.FALL == 1 || d.CO > 2500) {
+
+  // prevent spam (10 sec cooldown)
+  if (!window.lastAlertTime || Date.now() - window.lastAlertTime > 10000) {
+
+    fetch("http://localhost:3000/send-alert", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(d)
+    })
+    .then(res => console.log("Alert sent to server"))
+    .catch(err => console.log("Server error", err));
+
+    window.lastAlertTime = Date.now();
+    // SOUND + VOICE ALERT (ONE WORKER)
+if (d.FALL == 1) {
+
+  playSound();
+
+  speakAlert("Emergency! Worker 1 ravi kumar w 102 has detected a fall. Immediate help required.");
+
+}
+
+if (d.CO > 2500) {
+
+  playSound();
+
+  speakAlert("Warning! Gas level is dangerous. Evacuate immediately.");
+
+}
+
+// VOC ALERT (Lighter test will trigger this)
+if (d.VOC < 20) {
+
+  showAlert("☠️ AIR QUALITY CRITICAL");
+
+  addAlert("VOC DANGER");
+
+  playSound();
+
+  speakAlert("Warning! Air quality is dangerous. Evacuate immediately.");
+}
+  }
+}
+
+
+  setCard('c-hr','v-hr','s-hr','b-hr', d.HR, Math.round(d.HR), 40, 200, 100, 130);
+  setCard('c-temp','v-temp','s-temp','b-temp', d.TEMP, d.TEMP.toFixed(1), 20, 50, 35, 38);
+  setCard('c-hum','v-hum','s-hum','b-hum', d.HUM, Math.round(d.HUM), 0, 100, 75, 90);
+  setCard('c-co','v-co','s-co','b-co', d.CO, d.CO, 0, 4095, 1500, 2500);
+  // 🌫 VOC DISPLAY
+setCard(
+  'c-voc',
+  'v-voc',
+  's-voc',
+  'b-voc',
+  d.VOC,
+  d.VOC,
+  0,
+  100,
+  20,
+  50
+);
+
+setCard(
+  'c-aqi',
+  'v-aqi',
+  's-aqi',
+  'b-aqi',
+  d.AQI,
+  d.AQI,
+  0,
+  300,
+  150,
+  250
+);
+
+  document.getElementById('v-ax').textContent = (+d.AX).toFixed(1);
+  document.getElementById('v-ay').textContent = (+d.AY).toFixed(1);
+  document.getElementById('v-az').textContent = (+d.AZ).toFixed(1);
+
+  const mag = Math.sqrt(d.AX**2 + d.AY**2 + d.AZ**2);
+  const accelCard = document.getElementById('c-accel');
+  const accelStat = document.getElementById('s-accel');
+
+  if (d.FALL) {
+    accelCard.className='card danger';
+    accelStat.textContent='FALL DETECTED';
+  } else if (mag > 15) {
+    accelCard.className='card warn';
+    accelStat.textContent='HIGH VIBRATION';
+  } else {
+    accelCard.className='card safe';
+    accelStat.textContent='STABLE';
+  }
+
+  const fc = document.getElementById('c-fall');
+  const fi = document.getElementById('fall-icon');
+  const fs = document.getElementById('s-fall');
+
+  if (d.FALL) {
+    fc.className='card danger';
+    fi.textContent='↓';
+    fi.style.setProperty('--ac','#ff3344');
+    fs.textContent='FALL DETECTED';
+    showAlert('⚠ FALL DETECTED — Worker may be injured!');
+  } else {
+    fc.className='card safe';
+    fi.textContent='↑';
+    fi.style.setProperty('--ac','#00ff88');
+    fs.textContent='UPRIGHT';
+  }
+
+  document.getElementById('v-lat').textContent = d.LAT ? (+d.LAT).toFixed(6) : '—';
+  document.getElementById('v-lng').textContent = d.LNG ? (+d.LNG).toFixed(6) : '—';
+
+  if (d.LAT && d.LNG && +d.LAT !== 0) {
+    setMarker(+d.LAT, +d.LNG, d.FALL, d.CO);
+  }
+
+  if (d.CO > 2500) {
+    showAlert('☁ GAS LEVEL CRITICAL: ' + d.CO);
+  }
+  //  Worker Status
+  if (d.FALL == 1 || d.CO > 2500) {
+  document.getElementById("worker-status").innerText = "DANGER";
+  } else {
+  document.getElementById("worker-status").innerText = "SAFE";
+  }
+
+  //  Alerts
+  if (d.FALL == 1) {
+  addAlert("FALL DETECTED");
+  }
+
+  if (d.CO > 2500) {
+  addAlert("GAS ALERT");
+}
+
+  document.getElementById('raw').textContent = JSON.stringify(d, null, 2);
+
+  document.getElementById('last-time').textContent =
+    new Date().toTimeString().slice(0,8);
+}
+
+
+// ──  REAL-TIME LISTENER ─────────────────────────
+const dataRef = db.ref("sensorData");
+
+// STREAM NEW DATA CONTINUOUSLY
+
+dataRef.on("child_added", (snapshot) => {
+  const data = snapshot.val();
+  if (!data) return;
+
+  render(data);
+
+  const pill = document.getElementById('conn-pill');
+  pill.classList.remove("err");
+  pill.classList.add("ok");
+
+  document.getElementById('conn-dot').className = 'dot blink';
+  document.getElementById('conn-txt').textContent = 'LIVE';
+});
+</script>
+</body>
+</html>
